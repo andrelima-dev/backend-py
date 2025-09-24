@@ -1,89 +1,121 @@
-# Backend - Sistema de Acesso OAB
+# Backend - Sistema de Acesso OAB (v3.0)
 
-Este é o serviço de backend em Python para a aplicação de quiosque da OAB. Ele gerencia a autenticação e a sessão dos advogados através de uma API local.
+Este é o serviço de backend em Python para a aplicação de quiosque da OAB. Ele gerencia a autenticação, sessões de uso com tempo limite, e cotas de impressão através de uma API local.
 
 ## Setup do Ambiente
 
 1.  Certifique-se de ter o Python 3.10+ instalado.
-2.  Clone este repositório ou baixe os arquivos.
-3.  Abra um terminal na pasta do projeto e instale as dependências com o seguinte comando:
+2.  Abra um terminal na pasta do projeto e instale as dependências:
     ```
     pip install -r requirements.txt
     ```
 
 ## Como Iniciar o Servidor
 
-Para iniciar o backend, execute o seguinte comando no terminal, dentro da pasta do projeto:
+Para iniciar o backend, execute o seguinte comando no terminal:
 
 ```
 python backend.py
 ```
 
-O servidor estará disponível no endereço `http://127.0.0.1:5000`. O log de eventos (tentativas de login, etc.) aparecerá nesta janela do terminal.
+O servidor estará disponível no endereço `http://127.0.0.1:5000`.
 
 ## Documentação da API
 
-A comunicação entre o frontend (Electron) e o backend (Python) é feita via requisições HTTP para os seguintes endpoints.
-
 ### **1. `POST /login`**
 
-Realiza a autenticação do advogado.
+Autentica o advogado e inicia uma nova sessão de uso.
 
--   **URL:** `/login`
--   **Método:** `POST`
 -   **Corpo da Requisição (JSON):**
     ```json
     {
-      "oab": "MA12345",
-      "cpf": "333.333.333-33"
+      "oab": "MA654321",
+      "cpf": "222.22-22",
+      "nascimento": "15/07/1992",
+      "mac_address": "00:1A:2B:3C:4D:5E"
     }
     ```
--   **Resposta de Sucesso (Código 200 OK):**
+-   **Resposta de Sucesso (200 OK):**
     ```json
     {
       "status": "apto",
       "advogado": {
-        "nome": "Dra. Ana Costa",
-        "oab": "MA12345",
-        "start_time": "2025-09-21T23:30:00.123456"
+        "nome": "Dra. Maria Oliveira",
+        "oab": "MA654321",
+        "tipo": "advogado",
+        "start_time": "...",
+        "limite_minutos": 180,
+        "notificacoes_enviadas": []
       }
     }
     ```
--   **Resposta de Falha (Código 401 Unauthorized):**
+-   **Resposta de Falha (401 Unauthorized):**
     ```json
     {
       "status": "negado",
-      "mensagem": "Credenciais inválidas."
+      "mensagem": "Credenciais inválidas ou usuário inativo."
     }
     ```
 
 ### **2. `GET /session_info`**
 
-Recupera as informações da sessão ativa. Ideal para ser chamado a cada segundo pelo frontend para atualizar o painel de monitoramento.
+Recupera o status atual da sessão. Este é o endpoint principal para monitoramento.
 
--   **URL:** `/session_info`
--   **Método:** `GET`
+-   **Como Usar:** O frontend (Electron) deve chamar este endpoint a cada X segundos (ex: 10 segundos) para manter as informações atualizadas.
+
+-   **URL (com query parameter):** `/session_info?oab=MA654321`
+
 -   **Resposta de Sucesso (200 OK):**
     ```json
     {
-      "nome": "Dra. Ana Costa",
-      "oab": "MA12345",
-      "tempo_de_uso": "0:15:42"
+      "nome": "Dra. Maria Oliveira",
+      "oab": "MA654321",
+      "tipo": "advogado",
+      "tempo_de_uso": "0:05:32",
+      "tempo_restante_formatado": "2:54:28",
+      "forcar_logout": false,
+      "notificacao": "Atenção: Restam aproximadamente 150 minutos na sua sessão."
     }
     ```
--   **Resposta de Falha (404 Not Found):** (Se não houver sessão ativa)
+-   **Guia para o Frontend (Electron):**
+    * **`forcar_logout`**: Se este valor vier como `true`, o frontend deve imediatamente encerrar a sessão do usuário e voltar para a tela de login.
+    * **`notificacao`**: Se este valor contiver um texto (não for `null`), o frontend deve exibi-lo em uma janela de pop-up para o usuário.
+
+### **3. `POST /imprimir`**
+
+Calcula o custo de uma solicitação de impressão e registra o evento se confirmado.
+
+-   **Como Usar:** O frontend envia a quantidade de páginas que o usuário deseja imprimir. O backend responde com o cálculo de custos. O frontend deve exibir essa resposta para o usuário e pedir confirmação antes de efetivamente enviar para a impressora.
+
+-   **Corpo da Requisição (JSON):**
     ```json
     {
-      "error": "Nenhuma sessão ativa."
+      "oab": "MA654321",
+      "paginas_solicitadas": 40
     }
     ```
+-   **Resposta de Sucesso (200 OK):**
+    ```json
+    {
+        "status": "calculado",
+        "mensagem_para_usuario": "Das 40 páginas, 20 são gratuitas. As 20 páginas restantes custarão R$ 10.00.",
+        "paginas_cobradas": 20,
+        "custo_total": "10.00"
+    }
+    ```
+-   **Guia para o Frontend (Electron):**
+    * O frontend deve exibir a `mensagem_para_usuario` em uma caixa de diálogo com botões "Confirmar" e "Cancelar".
 
-### **3. `POST /logout`**
+### **4. `POST /logout`**
 
-Encerra a sessão do advogado no backend, limpando os dados do usuário logado.
+Encerra a sessão do advogado no backend.
 
--   **URL:** `/logout`
--   **Método:** `POST`
+-   **Corpo da Requisição (JSON):**
+    ```json
+    {
+      "oab": "MA654321"
+    }
+    ```
 -   **Resposta de Sucesso (200 OK):**
     ```json
     {
@@ -92,9 +124,12 @@ Encerra a sessão do advogado no backend, limpando os dados do usuário logado.
     }
     ```
 
-### **4. `POST /shutdown`**
+### **5. `GET /mac_address`**
+Retorna o endereço MAC da máquina onde o servidor está rodando.
 
-Instrui o servidor backend a se desligar. Ideal para ser chamado pelo Electron quando a aplicação principal for fechada, para garantir que nenhum processo Python fique rodando em segundo plano.
-
--   **URL:** `/shutdown`
--   **Método:** `POST`
+-   **Resposta de Sucesso (200 OK):**
+    ```json
+    {
+      "mac_address": "00:E0:4C:1D:5B:B4"
+    }
+    ```
